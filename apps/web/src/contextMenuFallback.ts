@@ -349,19 +349,38 @@ export function showContextMenuFallback<T extends string>(
         }
 
         if (!isDisabled) {
+          let isHovered = false;
+          let isFocused = false;
+          const updateHighlight = () => {
+            const isHighlighted = isHovered || isFocused;
+            button.style.background = isHighlighted
+              ? isLeafDestructive
+                ? "color-mix(in srgb, var(--destructive) 10%, transparent)"
+                : "var(--accent)"
+              : "transparent";
+            button.style.color = isHighlighted
+              ? isLeafDestructive
+                ? "var(--destructive-foreground)"
+                : "var(--accent-foreground)"
+              : isLeafDestructive
+                ? "var(--destructive-foreground)"
+                : "var(--foreground)";
+          };
           button.addEventListener("mouseenter", () => {
-            button.style.background = isLeafDestructive
-              ? "color-mix(in srgb, var(--destructive) 10%, transparent)"
-              : "var(--accent)";
-            button.style.color = isLeafDestructive
-              ? "var(--destructive-foreground)"
-              : "var(--accent-foreground)";
+            isHovered = true;
+            updateHighlight();
           });
           button.addEventListener("mouseleave", () => {
-            button.style.background = "transparent";
-            button.style.color = isLeafDestructive
-              ? "var(--destructive-foreground)"
-              : "var(--foreground)";
+            isHovered = false;
+            updateHighlight();
+          });
+          button.addEventListener("focus", () => {
+            isFocused = true;
+            updateHighlight();
+          });
+          button.addEventListener("blur", () => {
+            isFocused = false;
+            updateHighlight();
           });
 
           if (hasChildren) {

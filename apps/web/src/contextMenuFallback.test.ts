@@ -70,6 +70,12 @@ class FakeElement {
 
   focus() {
     this.focused = true;
+    this.dispatchEvent(new FakeDomEvent("focus"));
+  }
+
+  blur() {
+    this.focused = false;
+    this.dispatchEvent(new FakeDomEvent("blur"));
   }
 
   set textContent(value: string) {
@@ -280,6 +286,10 @@ describe("showContextMenuFallback", () => {
     const childButton = findButton("Path");
     expect(childButton).toBeTruthy();
     expect(childButton?.focused).toBe(true);
+    expect(childButton?.style.background).toBe("var(--accent)");
+    expect(childButton?.style.color).toBe("var(--accent-foreground)");
+    childButton?.blur();
+    expect(childButton?.style.background).toBe("transparent");
     childButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 
     await expect(selectionPromise).resolves.toBe("copy:path");
