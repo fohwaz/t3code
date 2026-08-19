@@ -267,16 +267,12 @@ const isMacAppAvailable = Effect.fn("externalLauncher.isMacAppAvailable")(functi
   env: NodeJS.ProcessEnv,
 ): Effect.fn.Return<boolean, never, FileSystem.FileSystem> {
   const fs = yield* FileSystem.FileSystem;
-  const directPath = `/Applications/${appName}.app`;
-  const directExists = yield* fs.exists(directPath).pipe(Effect.orElseSucceed(() => false));
-  if (directExists) {
-    return true;
+  const candidatePaths = [`/Applications/${appName}.app`];
+  if (env.HOME) {
+    candidatePaths.push(`${env.HOME}/Applications/${appName}.app`);
   }
-  const home = env.HOME;
-  if (home) {
-    const homePath = `${home}/Applications/${appName}.app`;
-    const homeExists = yield* fs.exists(homePath).pipe(Effect.orElseSucceed(() => false));
-    if (homeExists) {
+  for (const candidate of candidatePaths) {
+    if (yield* fs.exists(candidate).pipe(Effect.orElseSucceed(() => false))) {
       return true;
     }
   }

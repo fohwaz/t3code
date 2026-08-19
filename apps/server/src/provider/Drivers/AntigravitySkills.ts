@@ -24,63 +24,23 @@ type AntigravitySkillScope = "user" | "project";
 
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
 
-type SkillFrontmatter =
-  | { readonly kind: "missing" }
-  | { readonly kind: "malformed" }
-  | { readonly kind: "parsed"; readonly name?: string; readonly description?: string };
-
-function parseSkillFrontmatter(contents: string): SkillFrontmatter {
+function parseSkillFrontmatter(
+  contents: string,
+): { readonly name?: string; readonly description?: string } | null {
   const match = FRONTMATTER_PATTERN.exec(contents);
-  if (!match) {
-    return { kind: "missing" };
-  }
-
-  let parsed: unknown;
+  if (!match) return {};
   try {
-    parsed = parseYamlDocument(match[1] ?? "");
+    const parsed = parseYamlDocument(match[1] ?? "");
+    if (typeof parsed !== "object" || parsed === null) return null;
+    const record = parsed as Record<string, unknown>;
+    const name = typeof record.name === "string" ? record.name.trim() : undefined;
+    const description =
+      typeof record.description === "string" ? record.description.trim() : undefined;
+    return { name: name || undefined, description: description || undefined };
   } catch {
-    return { kind: "malformed" };
+    return null;
   }
-  if (typeof parsed !== "object" || parsed === null) {
-    return { kind: "malformed" };
-  }
-
-  const record = parsed as Record<string, unknown>;
-  const name = typeof record.name === "string" ? record.name.trim() : "";
-  const description = typeof record.description === "string" ? record.description.trim() : "";
-  return {
-    kind: "parsed",
-    ...(name ? { name } : {}),
-    ...(description ? { description } : {}),
-  };
 }
-
-const resolveAntigravityConfigDirPath = Effect.fn("resolveAntigravityConfigDirPath")(function* (
-  environment: NodeJS.ProcessEnv,
-  cwd?: string,
-): Effect.fn.Return<string, never, Path.Path> {
-  const path = yield* Path.Path;
-  const environmentConfigDir = environment.GEMINI_CONFIG_DIR?.trim() ?? "";
-  if (environmentConfigDir.length > 0) {
-    return cwd ? path.resolve(cwd, environmentConfigDir) : path.resolve(environmentConfigDir);
-  }
-  return path.join(NodeOS.homedir(), ".gemini", "config");
-});
-
-const resolveAntigravityBuiltinDirPath = Effect.fn("resolveAntigravityBuiltinDirPath")(function* (
-  environment: NodeJS.ProcessEnv,
-  cwd?: string,
-): Effect.fn.Return<string, never, Path.Path> {
-  const path = yield* Path.Path;
-  const environmentBuiltinDir =
-    environment.GEMINI_BUILTIN_SKILLS_DIR?.trim() ??
-    environment.ANTIGRAVITY_BUILTIN_SKILLS_DIR?.trim() ??
-    "";
-  if (environmentBuiltinDir.length > 0) {
-    return cwd ? path.resolve(cwd, environmentBuiltinDir) : path.resolve(environmentBuiltinDir);
-  }
-  return path.join(NodeOS.homedir(), ".gemini", "antigravity-cli", "builtin", "skills");
-});
 
 export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(function* (
   _config: Pick<AntigravitySettings, "binaryPath">,
@@ -90,8 +50,22 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const resolvedEnv = environment ?? process.env;
-  const configDirPath = yield* resolveAntigravityConfigDirPath(resolvedEnv, cwd);
-  const builtinDirPath = yield* resolveAntigravityBuiltinDirPath(resolvedEnv, cwd);
+
+  const configEnv = resolvedEnv.GEMINI_CONFIG_DIR?.trim();
+  const configDirPath = configEnv
+    ? cwd
+      ? path.resolve(cwd, configEnv)
+      : path.resolve(configEnv)
+    : path.join(NodeOS.homedir(), ".gemini", "config");
+
+  const builtinEnv =
+    resolvedEnv.GEMINI_BUILTIN_SKILLS_DIR?.trim() ??
+    resolvedEnv.ANTIGRAVITY_BUILTIN_SKILLS_DIR?.trim();
+  const builtinDirPath = builtinEnv
+    ? cwd
+      ? path.resolve(cwd, builtinEnv)
+      : path.resolve(builtinEnv)
+    : path.join(NodeOS.homedir(), ".gemini", "antigravity-cli", "builtin", "skills");
 
   const roots: { directory: string; scope: AntigravitySkillScope }[] = [
     { directory: builtinDirPath, scope: "user" },
@@ -144,11 +118,11 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
       }
 
       const frontmatter = parseSkillFrontmatter(contents);
-      if (frontmatter.kind === "malformed") {
+      if (frontmatter === null) {
         continue;
       }
 
-      const name = (frontmatter.kind === "parsed" ? frontmatter.name : undefined) ?? entry.trim();
+      const name = frontmatter.name ?? entry.trim();
       if (!name) {
         continue;
       }
@@ -158,9 +132,7 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
         path: skillPath,
         enabled: true,
         scope: root.scope,
-        ...(frontmatter.kind === "parsed" && frontmatter.description
-          ? { description: frontmatter.description }
-          : {}),
+        ...(frontmatter.description ? { description: frontmatter.description } : {}),
       });
     }
   }

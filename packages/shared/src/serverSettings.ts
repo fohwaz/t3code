@@ -51,33 +51,19 @@ export function resolveEffectiveTextGenerationModelSelection(
   providers?: ReadonlyArray<ServerProvider>,
   fallbackSelection?: ModelSelection,
 ): ModelSelection {
-  const configured = settings.textGenerationModelSelection;
-  if (isModelSelectionProviderEnabled(settings, configured)) {
-    if (providers === undefined) {
-      return configured;
-    }
-    const provider = providers.find((candidate) => candidate.instanceId === configured.instanceId);
-    if (provider?.enabled === true && isProviderAvailable(provider)) {
-      return configured;
-    }
-  }
+  const isUsable = (sel: ModelSelection): boolean => {
+    if (!isModelSelectionProviderEnabled(settings, sel)) return false;
+    if (providers === undefined) return true;
+    const provider = providers.find((candidate) => candidate.instanceId === sel.instanceId);
+    return provider?.enabled === true && isProviderAvailable(provider);
+  };
 
-  if (fallbackSelection && isModelSelectionProviderEnabled(settings, fallbackSelection)) {
-    if (providers === undefined) {
-      return fallbackSelection;
-    }
-    const provider = providers.find(
-      (candidate) => candidate.instanceId === fallbackSelection.instanceId,
-    );
-    if (provider?.enabled === true && isProviderAvailable(provider)) {
-      return fallbackSelection;
-    }
-  }
+  const configured = settings.textGenerationModelSelection;
+  if (isUsable(configured)) return configured;
+  if (fallbackSelection && isUsable(fallbackSelection)) return fallbackSelection;
 
   if (providers !== undefined) {
-    const available = providers.find(
-      (candidate) => candidate.enabled === true && isProviderAvailable(candidate),
-    );
+    const available = providers.find((c) => c.enabled === true && isProviderAvailable(c));
     if (available) {
       const model =
         available.models.find((m) => m.isDefault)?.slug ?? available.models[0]?.slug ?? "default";

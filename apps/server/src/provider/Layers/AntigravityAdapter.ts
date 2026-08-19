@@ -20,6 +20,7 @@ import {
   type ProviderSessionStartInput,
   type ProviderTurnStartResult,
   type ProviderUserInputAnswers,
+  type UserInputQuestion,
   RuntimeItemId,
   RuntimeRequestId,
   RuntimeTaskId,
@@ -85,6 +86,13 @@ function parseAntigravityResume(raw: unknown): AntigravityResumeCursor | undefin
   };
 }
 
+interface PendingUserInput {
+  readonly requestId: ApprovalRequestId;
+  readonly questions: ReadonlyArray<UserInputQuestion>;
+  readonly answers: Deferred.Deferred<ProviderUserInputAnswers, ProviderAdapterSessionClosedError>;
+  readonly itemId: RuntimeItemId;
+}
+
 interface AntigravitySessionContext {
   session: ProviderSession;
   conversationId?: string | undefined;
@@ -95,8 +103,80 @@ interface AntigravitySessionContext {
         readonly fiber: Fiber.Fiber<void, never>;
       }
     | undefined;
+  readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
+  readonly stepIndexToPendingRequestId: Map<number, ApprovalRequestId>;
   readonly scope: Scope.Closeable;
   readonly stopped: Ref.Ref<boolean>;
+}
+
+export function extractAntigravityAskQuestions(
+  parameters: unknown,
+): ReadonlyArray<UserInputQuestion> {
+  if (!parameters || typeof parameters !== "object") {
+    return [];
+  }
+  const rawQuestions = (parameters as Record<string, unknown>).questions;
+  if (!Array.isArray(rawQuestions)) {
+    return [];
+  }
+
+  return rawQuestions.flatMap((q: unknown, index: number) => {
+    if (typeof q !== "object" || q === null) {
+      return [];
+    }
+    const questionObj = q as Record<string, unknown>;
+    const questionText =
+      typeof questionObj.question === "string" && questionObj.question.trim().length > 0
+        ? questionObj.question.trim()
+        : "";
+    const questionId =
+      typeof questionObj.id === "string" && questionObj.id.trim().length > 0
+        ? questionObj.id.trim()
+        : questionText.length > 0
+          ? questionText
+          : `q-${index + 1}`;
+    const header =
+      typeof questionObj.header === "string" && questionObj.header.trim().length > 0
+        ? questionObj.header.trim()
+        : `Question ${index + 1}`;
+    const isMultiSelect =
+      questionObj.is_multi_select === true ||
+      questionObj.multiSelect === true ||
+      questionObj.allowMultiple === true;
+
+    const rawOptions = Array.isArray(questionObj.options) ? questionObj.options : [];
+    const options: Array<{ label: string; description: string }> = rawOptions.flatMap(
+      (opt: unknown) => {
+        if (typeof opt === "string") {
+          const trimmed = opt.trim();
+          if (trimmed.length === 0) return [];
+          return [{ label: trimmed, description: trimmed }];
+        }
+        if (typeof opt === "object" && opt !== null) {
+          const optObj = opt as Record<string, unknown>;
+          const label = String(optObj.label ?? optObj.value ?? "").trim();
+          const description = String(
+            optObj.description ?? optObj.label ?? optObj.value ?? "",
+          ).trim();
+          if (label.length === 0) return [];
+          return [{ label, description: description.length > 0 ? description : label }];
+        }
+        const str = String(opt).trim();
+        if (str.length === 0) return [];
+        return [{ label: str, description: str }];
+      },
+    );
+
+    return [
+      {
+        id: questionId,
+        header,
+        question: questionText.length > 0 ? questionText : `Question ${index + 1}`,
+        options: options.length > 0 ? options : [{ label: "OK", description: "Continue" }],
+        multiSelect: isMultiSelect,
+      },
+    ];
+  });
 }
 
 function mapToolNameToItemType(toolName: string): CanonicalItemType {
@@ -249,6 +329,8 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
       const ctx: AntigravitySessionContext = {
         session,
         conversationId: parsedResume?.conversationId,
+        pendingUserInputs: new Map(),
+        stepIndexToPendingRequestId: new Map(),
         scope: sessionScope,
         stopped: stoppedRef,
       };
@@ -487,7 +569,48 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
                     data: toolInfo?.parameters,
                   },
                 });
+
+                if (
+                  toolName === "ask_question" ||
+                  toolName === "ask_user_question" ||
+                  toolName === "ask_followup_question"
+                ) {
+                  const questions = extractAntigravityAskQuestions(toolInfo?.parameters);
+                  if (questions.length > 0) {
+                    const requestId = ApprovalRequestId.make(globalThis.crypto.randomUUID());
+                    const answersDeferred = yield* Deferred.make<
+                      ProviderUserInputAnswers,
+                      ProviderAdapterSessionClosedError
+                    >();
+                    ctx.pendingUserInputs.set(requestId, {
+                      requestId,
+                      questions,
+                      answers: answersDeferred,
+                      itemId,
+                    });
+                    if (stepIndex !== undefined) {
+                      ctx.stepIndexToPendingRequestId.set(stepIndex, requestId);
+                    }
+                    yield* publishEvent({
+                      ...makeEventBase(
+                        input.threadId,
+                        turnId,
+                        itemId,
+                        RuntimeRequestId.make(requestId),
+                      ),
+                      type: "user-input.requested",
+                      payload: {
+                        questions,
+                      },
+                    });
+                  }
+                }
               } else if (state === "DONE") {
+                if (stepIndex !== undefined && ctx.stepIndexToPendingRequestId.has(stepIndex)) {
+                  const requestId = ctx.stepIndexToPendingRequestId.get(stepIndex)!;
+                  ctx.stepIndexToPendingRequestId.delete(stepIndex);
+                  ctx.pendingUserInputs.delete(requestId);
+                }
                 const toolOutput = toolInfo?.output ?? toolInfo?.result;
                 if (toolOutput !== undefined && toolOutput !== null) {
                   const outputStr =
@@ -520,6 +643,11 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
                   },
                 });
               } else if (state === "ERROR") {
+                if (stepIndex !== undefined && ctx.stepIndexToPendingRequestId.has(stepIndex)) {
+                  const requestId = ctx.stepIndexToPendingRequestId.get(stepIndex)!;
+                  ctx.stepIndexToPendingRequestId.delete(stepIndex);
+                  ctx.pendingUserInputs.delete(requestId);
+                }
                 yield* publishEvent({
                   ...makeEventBase(input.threadId, turnId, itemId),
                   type: "item.completed",
@@ -685,6 +813,18 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
       }
 
       if (activeTurn) {
+        for (const pending of ctx.pendingUserInputs.values()) {
+          yield* Deferred.fail(
+            pending.answers,
+            new ProviderAdapterSessionClosedError({
+              provider: PROVIDER,
+              threadId,
+            }),
+          ).pipe(Effect.ignore);
+        }
+        ctx.pendingUserInputs.clear();
+        ctx.stepIndexToPendingRequestId.clear();
+
         yield* publishEvent({
           ...makeEventBase(threadId, activeTurn),
           type: "turn.completed",
@@ -703,6 +843,17 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
         return;
       }
       yield* Ref.set(ctx.stopped, true);
+      for (const pending of ctx.pendingUserInputs.values()) {
+        yield* Deferred.fail(
+          pending.answers,
+          new ProviderAdapterSessionClosedError({
+            provider: PROVIDER,
+            threadId,
+          }),
+        ).pipe(Effect.ignore);
+      }
+      ctx.pendingUserInputs.clear();
+      ctx.stepIndexToPendingRequestId.clear();
       const activeProcess = ctx.activeProcess;
       if (activeProcess) {
         ctx.activeProcess = undefined;
@@ -775,10 +926,35 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
   ) => Effect.void;
 
   const respondToUserInput: AntigravityAdapterShape["respondToUserInput"] = (
-    _threadId: ThreadId,
-    _requestId: ApprovalRequestId,
-    _answers: ProviderUserInputAnswers,
-  ) => Effect.void;
+    threadId: ThreadId,
+    requestId: ApprovalRequestId,
+    answers: ProviderUserInputAnswers,
+  ) =>
+    Effect.gen(function* () {
+      const ctx = yield* requireSession(threadId);
+      const pending = ctx.pendingUserInputs.get(requestId);
+      if (!pending) {
+        return yield* new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "respondToUserInput",
+          detail: `Unknown pending user-input request: ${requestId}`,
+        });
+      }
+      ctx.pendingUserInputs.delete(requestId);
+      yield* Deferred.succeed(pending.answers, answers);
+      yield* publishEvent({
+        ...makeEventBase(
+          threadId,
+          ctx.activeTurnId,
+          pending.itemId,
+          RuntimeRequestId.make(requestId),
+        ),
+        type: "user-input.resolved",
+        payload: {
+          answers,
+        },
+      });
+    });
 
   return {
     provider: PROVIDER,

@@ -29,14 +29,6 @@ import {
 
 const ANTIGRAVITY_TEXT_GENERATION_TIMEOUT_MS = 60_000;
 
-const isTextGenerationError = Schema.is(TextGenerationError);
-
-interface AgyJsonResult {
-  readonly status: "SUCCESS" | "ERROR";
-  readonly response?: string;
-  readonly error?: string;
-}
-
 export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGeneration")(function* (
   antigravitySettings: AntigravitySettings,
   environment: NodeJS.ProcessEnv = process.env,
@@ -98,45 +90,26 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
         });
       }
 
-      let parsedJson: AgyJsonResult | undefined;
-      try {
-        parsedJson = JSON.parse(collected.stdout) as AgyJsonResult;
-      } catch {
-        // stdout wasn't wrapper JSON, try raw stdout
-      }
-
-      const responseText = parsedJson?.response ?? collected.stdout;
-      if (!responseText || responseText.trim().length === 0) {
+      const rawOutput = collected.stdout.trim();
+      if (rawOutput.length === 0) {
         return yield* new TextGenerationError({
           operation,
-          detail: parsedJson?.error || `Antigravity returned empty output for ${operation}.`,
+          detail: `Antigravity returned empty output for ${operation}.`,
         });
       }
 
       const decodeOutput = Schema.decodeEffect(Schema.fromJsonString(outputSchemaJson));
-      return yield* decodeOutput(extractJsonObject(responseText.trim())).pipe(
-        Effect.catchTags({
-          SchemaError: (cause) =>
-            Effect.fail(
-              new TextGenerationError({
-                operation,
-                detail: "Antigravity returned invalid structured output.",
-                cause,
-              }),
-            ),
-        }),
-      );
-    }).pipe(
-      Effect.mapError((cause) =>
-        isTextGenerationError(cause)
-          ? cause
-          : new TextGenerationError({
+      return yield* decodeOutput(extractJsonObject(rawOutput)).pipe(
+        Effect.mapError(
+          (cause) =>
+            new TextGenerationError({
               operation,
-              detail: `Antigravity text generation failed: ${String(cause)}`,
+              detail: "Antigravity returned invalid structured output.",
               cause,
             }),
-      ),
-    );
+        ),
+      );
+    });
 
   const generateCommitMessage: TextGeneration.TextGeneration["Service"]["generateCommitMessage"] =
     Effect.fn("AntigravityTextGeneration.generateCommitMessage")(function* (input) {
