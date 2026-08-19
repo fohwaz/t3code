@@ -24,8 +24,10 @@ class FakeElement {
   parent: FakeElement | null = null;
   style: Record<string, string> & { cssText?: string } = {};
   dataset: Record<string, string> = {};
+  attributes = new Map<string, string>();
   className = "";
   disabled = false;
+  focused = false;
   type = "";
   private textValue = "";
   private readonly listeners = new Map<string, FakeListener[]>();
@@ -55,11 +57,19 @@ class FakeElement {
     this.listeners.set(type, existing);
   }
 
+  setAttribute(name: string, value: string) {
+    this.attributes.set(name, value);
+  }
+
   dispatchEvent(event: FakeDomEvent) {
     for (const listener of this.listeners.get(event.type) ?? []) {
       listener(event);
     }
     return true;
+  }
+
+  focus() {
+    this.focused = true;
   }
 
   set textContent(value: string) {
@@ -183,6 +193,21 @@ afterEach(() => {
 });
 
 describe("showContextMenuFallback", () => {
+  it("renders one separator between menu sections", async () => {
+    const selectionPromise = showContextMenuFallback([
+      { id: "rename", label: "Rename" },
+      { id: "archive", label: "Archive", separatorBefore: true },
+    ]);
+    const separators = (document as unknown as FakeDocument)
+      .querySelectorAll("div")
+      .filter((element) => element.dataset.contextMenuSeparator === "true");
+
+    expect(separators).toHaveLength(1);
+    expect(separators[0]?.attributes.get("role")).toBe("separator");
+    dismissContextMenu();
+    await expect(selectionPromise).resolves.toBeNull();
+  });
+
   it("resolves a clicked flat menu item", async () => {
     const selectionPromise = showContextMenuFallback([
       { id: "rename", label: "Rename" },
@@ -234,6 +259,30 @@ describe("showContextMenuFallback", () => {
     childButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 
     await expect(selectionPromise).resolves.toBe("rename:project-b");
+  });
+
+  it("opens and focuses nested submenus when the parent is activated", async () => {
+    const selectionPromise = showContextMenuFallback([
+      {
+        id: "copy:submenu",
+        label: "Copy",
+        children: [
+          { id: "copy:path", label: "Path" },
+          { id: "copy:branch", label: "Branch" },
+        ],
+      },
+    ]);
+
+    const parentButton = findButton("Copy");
+    expect(parentButton).toBeTruthy();
+    parentButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    const childButton = findButton("Path");
+    expect(childButton).toBeTruthy();
+    expect(childButton?.focused).toBe(true);
+    childButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    await expect(selectionPromise).resolves.toBe("copy:path");
   });
 });
 
