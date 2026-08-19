@@ -34,6 +34,14 @@ class FakeElement {
 
   constructor(readonly tagName: string) {}
 
+  get isConnected() {
+    let current: FakeElement | null = this;
+    while (current?.parent) {
+      current = current.parent;
+    }
+    return current?.tagName === "body";
+  }
+
   appendChild(child: FakeElement) {
     child.parent = this;
     this.children.push(child);
@@ -179,6 +187,7 @@ function findButton(label: string): FakeElement | undefined {
 
 beforeEach(() => {
   vi.stubGlobal("document", new FakeDocument());
+  vi.stubGlobal("HTMLElement", FakeElement);
   vi.stubGlobal("window", {
     innerWidth: 1280,
     innerHeight: 800,
@@ -279,6 +288,9 @@ describe("showContextMenuFallback", () => {
   });
 
   it("opens and focuses nested submenus when the parent is activated", async () => {
+    const invoker = (document as unknown as FakeDocument).createElement("button");
+    (document as unknown as FakeDocument).body.appendChild(invoker);
+    invoker.focus();
     const selectionPromise = showContextMenuFallback([
       {
         id: "copy:submenu",
@@ -312,6 +324,7 @@ describe("showContextMenuFallback", () => {
     siblingButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 
     await expect(selectionPromise).resolves.toBe("copy:branch");
+    expect(invoker.focused).toBe(true);
   });
 });
 
