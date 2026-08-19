@@ -20,6 +20,13 @@ describe("ProviderSettingsForm helpers", () => {
       "shadowHomePath",
       "launchArgs",
     ]);
+
+    const antigravity = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("antigravity")];
+    expect(antigravity).toBeDefined();
+    expect(deriveProviderSettingsFields(antigravity!).map((field) => field.key)).toEqual([
+      "binaryPath",
+      "launchArgs",
+    ]);
   });
 
   it("sources labels and descriptions from schema annotations", () => {
