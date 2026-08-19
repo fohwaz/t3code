@@ -26,16 +26,12 @@ import {
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
-import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
-import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
-import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -85,21 +81,14 @@ function parseAntigravityResume(raw: unknown): AntigravityResumeCursor | undefin
   };
 }
 
-interface AntigravityTurnSnapshot {
-  readonly id: TurnId;
-  readonly items: Array<unknown>;
-}
-
 interface AntigravitySessionContext {
   session: ProviderSession;
   conversationId?: string;
   activeTurnId?: TurnId;
   activeProcess?: {
     readonly process: ChildProcess.ChildProcess;
-    readonly stdinWriter: (text: string) => Effect.Effect<void>;
     readonly fiber: Fiber.Fiber<void, never>;
   };
-  turns: Array<AntigravityTurnSnapshot>;
   readonly scope: Scope.CloseableScope;
   readonly stopped: Ref.Ref<boolean>;
 }
@@ -221,7 +210,6 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
       const ctx: AntigravitySessionContext = {
         session,
         conversationId: parsedResume?.conversationId,
-        turns: [],
         scope: sessionScope,
         stopped: stoppedRef,
       };
@@ -593,7 +581,6 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
 
       ctx.activeProcess = {
         process: proc,
-        stdinWriter,
         fiber: eventProcessingFiber,
       };
 
@@ -685,26 +672,19 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
 
   const readThread = (threadId: ThreadId) =>
     Effect.gen(function* () {
-      const ctx = yield* requireSession(threadId);
+      yield* requireSession(threadId);
       return {
         threadId,
-        turns: ctx.turns.map((turn) => ({
-          id: turn.id,
-          items: turn.items,
-        })),
+        turns: [],
       };
     });
 
-  const rollbackThread = (threadId: ThreadId, numTurns: number) =>
+  const rollbackThread = (threadId: ThreadId, _numTurns: number) =>
     Effect.gen(function* () {
-      const ctx = yield* requireSession(threadId);
-      ctx.turns = ctx.turns.slice(0, Math.max(0, ctx.turns.length - numTurns));
+      yield* requireSession(threadId);
       return {
         threadId,
-        turns: ctx.turns.map((turn) => ({
-          id: turn.id,
-          items: turn.items,
-        })),
+        turns: [],
       };
     });
 
