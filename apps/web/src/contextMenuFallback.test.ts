@@ -69,11 +69,21 @@ class FakeElement {
   }
 
   focus() {
+    const fakeDocument = document as unknown as FakeDocument;
+    if (fakeDocument.activeElement === this) {
+      return;
+    }
+    fakeDocument.activeElement?.blur();
+    fakeDocument.activeElement = this;
     this.focused = true;
     this.dispatchEvent(new FakeDomEvent("focus"));
   }
 
   blur() {
+    const fakeDocument = document as unknown as FakeDocument;
+    if (fakeDocument.activeElement === this) {
+      fakeDocument.activeElement = null;
+    }
     this.focused = false;
     this.dispatchEvent(new FakeDomEvent("blur"));
   }
@@ -132,6 +142,7 @@ class FakeBody extends FakeElement {
 
 class FakeDocument {
   body = new FakeBody();
+  activeElement: FakeElement | null = null;
   private readonly listeners = new Map<string, FakeListener[]>();
 
   createElement(tagName: string) {
@@ -281,18 +292,26 @@ describe("showContextMenuFallback", () => {
 
     const parentButton = findButton("Copy");
     expect(parentButton).toBeTruthy();
+    expect(parentButton?.attributes.get("aria-haspopup")).toBe("menu");
+    expect(parentButton?.attributes.get("aria-expanded")).toBe("false");
     parentButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(parentButton?.attributes.get("aria-expanded")).toBe("true");
 
     const childButton = findButton("Path");
+    const siblingButton = findButton("Branch");
     expect(childButton).toBeTruthy();
+    expect(siblingButton).toBeTruthy();
     expect(childButton?.focused).toBe(true);
     expect(childButton?.style.background).toBe("var(--accent)");
     expect(childButton?.style.color).toBe("var(--accent-foreground)");
-    childButton?.blur();
+    siblingButton?.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
+    expect(childButton?.focused).toBe(false);
     expect(childButton?.style.background).toBe("transparent");
-    childButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(siblingButton?.focused).toBe(true);
+    expect(siblingButton?.style.background).toBe("var(--accent)");
+    siblingButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 
-    await expect(selectionPromise).resolves.toBe("copy:path");
+    await expect(selectionPromise).resolves.toBe("copy:branch");
   });
 });
 

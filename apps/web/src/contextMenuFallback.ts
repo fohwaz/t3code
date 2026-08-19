@@ -207,6 +207,7 @@ export function showContextMenuFallback<T extends string>(
 ): Promise<T | null> {
   return new Promise<T | null>((resolve) => {
     const menuStack: HTMLDivElement[] = [];
+    const submenuTriggerStack: Array<HTMLButtonElement | undefined> = [];
     let isDisposed = false;
     let canDismissFromPointer = false;
 
@@ -253,6 +254,7 @@ export function showContextMenuFallback<T extends string>(
 
     const closeMenusFromLevel = (level: number) => {
       while (menuStack.length > level) {
+        submenuTriggerStack.pop()?.setAttribute("aria-expanded", "false");
         menuStack.pop()?.remove();
       }
     };
@@ -262,6 +264,7 @@ export function showContextMenuFallback<T extends string>(
       preferredLeft: number,
       preferredTop: number,
       level: number,
+      parentTrigger?: HTMLButtonElement,
     ) => {
       closeMenusFromLevel(level);
 
@@ -337,12 +340,15 @@ export function showContextMenuFallback<T extends string>(
         button.appendChild(label);
 
         if (hasChildren) {
+          button.setAttribute("aria-haspopup", "menu");
+          button.setAttribute("aria-expanded", "false");
           const chevron = createIconElement("chevron-right", "neutral");
           if (chevron) {
             chevron.setAttribute(
               "class",
               "-me-0.5 ms-auto size-4.5 shrink-0 text-muted-foreground opacity-80 sm:size-4",
             );
+            chevron.setAttribute("aria-hidden", "true");
             chevron.dataset.contextMenuChevron = "true";
             button.appendChild(chevron);
           }
@@ -367,6 +373,7 @@ export function showContextMenuFallback<T extends string>(
                 : "var(--foreground)";
           };
           button.addEventListener("mouseenter", () => {
+            button.focus({ preventScroll: true });
             isHovered = true;
             updateHighlight();
           });
@@ -388,7 +395,8 @@ export function showContextMenuFallback<T extends string>(
               const rect = button.getBoundingClientRect();
               const nextLeft = rect.right + 4;
               const nextTop = rect.top;
-              openMenu(item.children!, nextLeft, nextTop, level + 1);
+              openMenu(item.children!, nextLeft, nextTop, level + 1, button);
+              button.setAttribute("aria-expanded", "true");
 
               const childMenu = menuStack[level + 1];
               if (!childMenu) {
@@ -432,6 +440,7 @@ export function showContextMenuFallback<T extends string>(
 
       document.body.appendChild(menu);
       menuStack[level] = menu;
+      submenuTriggerStack[level] = parentTrigger;
 
       requestAnimationFrame(() => {
         clampMenuPosition(menu, preferredLeft, preferredTop);
