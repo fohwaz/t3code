@@ -46,13 +46,55 @@ export function isModelSelectionProviderEnabled(
   );
 }
 
+export function resolveEffectiveTextGenerationModelSelection(
+  settings: ServerSettings,
+  providers?: ReadonlyArray<ServerProvider>,
+  fallbackSelection?: ModelSelection,
+): ModelSelection {
+  const configured = settings.textGenerationModelSelection;
+  if (isModelSelectionProviderEnabled(settings, configured)) {
+    if (providers === undefined) {
+      return configured;
+    }
+    const provider = providers.find((candidate) => candidate.instanceId === configured.instanceId);
+    if (provider?.enabled === true && isProviderAvailable(provider)) {
+      return configured;
+    }
+  }
+
+  if (fallbackSelection && isModelSelectionProviderEnabled(settings, fallbackSelection)) {
+    if (providers === undefined) {
+      return fallbackSelection;
+    }
+    const provider = providers.find(
+      (candidate) => candidate.instanceId === fallbackSelection.instanceId,
+    );
+    if (provider?.enabled === true && isProviderAvailable(provider)) {
+      return fallbackSelection;
+    }
+  }
+
+  if (providers !== undefined) {
+    const available = providers.find(
+      (candidate) => candidate.enabled === true && isProviderAvailable(candidate),
+    );
+    if (available) {
+      const model =
+        available.models.find((m) => m.isDefault)?.slug ?? available.models[0]?.slug ?? "default";
+      return createModelSelection(available.instanceId, model);
+    }
+  }
+
+  return configured;
+}
+
 export function resolveSourceControlWriterModelSelection(
   settings: ServerSettings,
   providers?: ReadonlyArray<ServerProvider>,
 ): ModelSelection {
   const selection = settings.sourceControlWriterModelSelection;
   if (!selection || !isModelSelectionProviderEnabled(settings, selection)) {
-    return settings.textGenerationModelSelection;
+    return resolveEffectiveTextGenerationModelSelection(settings, providers);
   }
   if (providers === undefined) {
     return selection;
@@ -61,7 +103,7 @@ export function resolveSourceControlWriterModelSelection(
   const provider = providers.find((candidate) => candidate.instanceId === selection.instanceId);
   return provider?.enabled === true && isProviderAvailable(provider)
     ? selection
-    : settings.textGenerationModelSelection;
+    : resolveEffectiveTextGenerationModelSelection(settings, providers);
 }
 
 export interface PersistedServerObservabilitySettings {

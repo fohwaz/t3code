@@ -262,6 +262,27 @@ function buildBrowserLaunch(
   };
 }
 
+const isMacAppAvailable = Effect.fn("externalLauncher.isMacAppAvailable")(function* (
+  appName: string,
+  env: NodeJS.ProcessEnv,
+): Effect.fn.Return<boolean, never, FileSystem.FileSystem> {
+  const fs = yield* FileSystem.FileSystem;
+  const directPath = `/Applications/${appName}.app`;
+  const directExists = yield* fs.exists(directPath).pipe(Effect.orElseSucceed(() => false));
+  if (directExists) {
+    return true;
+  }
+  const home = env.HOME;
+  if (home) {
+    const homePath = `${home}/Applications/${appName}.app`;
+    const homeExists = yield* fs.exists(homePath).pipe(Effect.orElseSucceed(() => false));
+    if (homeExists) {
+      return true;
+    }
+  }
+  return false;
+});
+
 const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors")(function* (
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
@@ -280,6 +301,13 @@ const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors"
     const command = yield* resolveAvailableCommand(editor.commands, env);
     if (Option.isSome(command)) {
       available.push(editor.id);
+      continue;
+    }
+
+    if (platform === "darwin" && "macApp" in editor && editor.macApp) {
+      if (yield* isMacAppAvailable(editor.macApp, env)) {
+        available.push(editor.id);
+      }
     }
   }
 
@@ -360,14 +388,31 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   }
 
   if (editorDef.commands) {
-    const command = Option.getOrElse(
-      yield* resolveAvailableCommand(editorDef.commands, env),
-      () => editorDef.commands[0],
-    );
+    const commandOpt = yield* resolveAvailableCommand(editorDef.commands, env);
+    if (Option.isSome(commandOpt)) {
+      return {
+        editor: editorDef.id,
+        target: input.cwd,
+        command: commandOpt.value,
+        args: resolveEditorArgs(editorDef, input.cwd),
+      };
+    }
+
+    if (platform === "darwin" && "macApp" in editorDef && editorDef.macApp) {
+      if (yield* isMacAppAvailable(editorDef.macApp, env)) {
+        return {
+          editor: editorDef.id,
+          target: input.cwd,
+          command: "open",
+          args: ["-a", editorDef.macApp, input.cwd],
+        };
+      }
+    }
+
     return {
       editor: editorDef.id,
       target: input.cwd,
-      command,
+      command: editorDef.commands[0],
       args: resolveEditorArgs(editorDef, input.cwd),
     };
   }

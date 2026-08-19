@@ -41,6 +41,7 @@ import {
 import { forkParked, ServerActivation } from "../../serverActivation.ts";
 import { canReplaceThreadTitle, DEFAULT_THREAD_TITLE } from "../threadTitles.ts";
 import {
+  resolveEffectiveTextGenerationModelSelection,
   resolveSourceControlWriterModelSelection,
   ServerSettingsService,
 } from "../../serverSettings.ts";
@@ -802,13 +803,16 @@ const make = Effect.gen(function* () {
     const attachments = input.attachments ?? [];
     yield* Effect.gen(function* () {
       const settings = yield* serverSettingsService.getSettings;
+      const providers = yield* providerRegistry.getProviders;
+      const thread = yield* resolveThread(input.threadId);
       const modelSelection =
         settings.sourceControlWriterModelSelection === null
-          ? settings.textGenerationModelSelection
-          : resolveSourceControlWriterModelSelection(
+          ? resolveEffectiveTextGenerationModelSelection(
               settings,
-              yield* providerRegistry.getProviders,
-            );
+              providers,
+              thread?.modelSelection,
+            )
+          : resolveSourceControlWriterModelSelection(settings, providers);
 
       const generated = yield* textGeneration.generateBranchName({
         cwd,
@@ -852,8 +856,14 @@ const make = Effect.gen(function* () {
     }) {
       const attachments = input.attachments ?? [];
       yield* Effect.gen(function* () {
-        const { textGenerationModelSelection: modelSelection } =
-          yield* serverSettingsService.getSettings;
+        const settings = yield* serverSettingsService.getSettings;
+        const providers = yield* providerRegistry.getProviders;
+        const thread = yield* resolveThread(input.threadId);
+        const modelSelection = resolveEffectiveTextGenerationModelSelection(
+          settings,
+          providers,
+          thread?.modelSelection,
+        );
 
         const generated = yield* textGeneration.generateThreadTitle({
           cwd: input.cwd,
@@ -863,7 +873,6 @@ const make = Effect.gen(function* () {
         });
         if (!generated) return;
 
-        const thread = yield* resolveThread(input.threadId);
         if (!thread) return;
         if (!canReplaceThreadTitle(thread.title, input.titleSeed)) {
           return;

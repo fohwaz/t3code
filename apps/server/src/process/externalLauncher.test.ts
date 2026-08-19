@@ -56,6 +56,7 @@ const testLayer = (input: {
   );
 
   return Layer.mergeAll(
+    NodeServices.layer,
     ExternalLauncher.layer.pipe(Layer.provide(Layer.merge(NodeServices.layer, spawnerLayer))),
     Layer.succeed(HostProcessPlatform, input.platform),
     Layer.succeed(
@@ -291,4 +292,38 @@ it.effect("rejects unknown editors through the service API", () =>
     assert.equal(error.editor, "missing-editor");
     assert.equal(error.message, "Unknown editor: missing-editor");
   }).pipe(Effect.provide(testLayer({ platform: "linux", env: { PATH: "" } }))),
+);
+
+it.effect("launches Antigravity macOS app via open -a on darwin when binary is not in PATH", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-antigravity-" });
+    const appDir = path.join(tempDir, "Applications", "Antigravity.app");
+    yield* fileSystem.makeDirectory(appDir, { recursive: true });
+
+    let spawned: ChildProcess.StandardCommand | undefined;
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      yield* launcher.launchEditor({
+        editor: "antigravity",
+        cwd: "/Users/test/workspace",
+      });
+    }).pipe(
+      Effect.provide(
+        testLayer({
+          platform: "darwin",
+          env: { PATH: "/usr/bin", HOME: tempDir },
+          resolveExecutable: (cmd) => (cmd === "open" ? "/usr/bin/open" : undefined),
+          onSpawn: (command) => {
+            spawned = command;
+          },
+        }),
+      ),
+    );
+
+    assert.ok(spawned);
+    assert.equal(spawned.command, "open");
+    assert.deepEqual(spawned.args, ["-a", "Antigravity", "/Users/test/workspace"]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

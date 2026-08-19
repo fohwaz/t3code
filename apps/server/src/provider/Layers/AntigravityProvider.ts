@@ -2,6 +2,7 @@ import {
   type AntigravitySettings,
   type ModelCapabilities,
   type ServerProviderModel,
+  type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -23,6 +24,33 @@ import {
   spawnAndCollect,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
+
+export const ANTIGRAVITY_SLASH_COMMANDS: ReadonlyArray<ServerProviderSlashCommand> = [
+  {
+    name: "plan",
+    description: "Structured implementation planning mode for complex tasks",
+  },
+  {
+    name: "grill-me",
+    description: "Interactive architecture and technical design interview",
+  },
+  {
+    name: "goal",
+    description: "Autonomous goal-driven execution until fully achieved",
+  },
+  {
+    name: "learn",
+    description: "Persist lessons, patterns, and workspace rules for future turns",
+  },
+  {
+    name: "schedule",
+    description: "Schedule a one-shot timer or recurring cron job",
+  },
+  {
+    name: "teamwork-preview",
+    description: "Coordinate a team of autonomous subagents working together",
+  },
+];
 
 const ANTIGRAVITY_PRESENTATION = {
   displayName: "Antigravity",
@@ -147,6 +175,7 @@ export function buildInitialAntigravityProviderSnapshot(
         checkedAt,
         models,
         skills,
+        slashCommands: ANTIGRAVITY_SLASH_COMMANDS,
         probe: {
           installed: false,
           version: null,
@@ -163,6 +192,7 @@ export function buildInitialAntigravityProviderSnapshot(
       checkedAt,
       models,
       skills,
+      slashCommands: ANTIGRAVITY_SLASH_COMMANDS,
       probe: {
         installed: true,
         version: null,
@@ -201,6 +231,7 @@ export const checkAntigravityProviderStatus = Effect.fn("checkAntigravityProvide
         checkedAt,
         models,
         skills,
+        slashCommands: ANTIGRAVITY_SLASH_COMMANDS,
         probe: {
           installed: false,
           version: null,
@@ -233,6 +264,7 @@ export const checkAntigravityProviderStatus = Effect.fn("checkAntigravityProvide
         checkedAt,
         models,
         skills,
+        slashCommands: ANTIGRAVITY_SLASH_COMMANDS,
         probe: {
           installed: !isCommandMissingCause(error),
           version: null,
@@ -252,6 +284,7 @@ export const checkAntigravityProviderStatus = Effect.fn("checkAntigravityProvide
         checkedAt,
         models,
         skills,
+        slashCommands: ANTIGRAVITY_SLASH_COMMANDS,
         probe: {
           installed: true,
           version: null,
@@ -275,6 +308,7 @@ export const checkAntigravityProviderStatus = Effect.fn("checkAntigravityProvide
         checkedAt,
         models,
         skills,
+        slashCommands: ANTIGRAVITY_SLASH_COMMANDS,
         probe: {
           installed: true,
           version: parsedVersion,
@@ -291,6 +325,7 @@ export const checkAntigravityProviderStatus = Effect.fn("checkAntigravityProvide
       checkedAt,
       models,
       skills,
+      slashCommands: ANTIGRAVITY_SLASH_COMMANDS,
       probe: {
         installed: true,
         version: parsedVersion,
