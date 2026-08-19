@@ -85,6 +85,9 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
     Effect.gen(function* () {
       const crypto = yield* Crypto.Crypto;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { cwd } = yield* ServerConfig;
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
       const processEnv = mergeProviderInstanceEnvironment(environment);
@@ -111,9 +114,11 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
       });
       const textGeneration = yield* makeAntigravityTextGeneration(effectiveConfig, processEnv);
 
-      const checkProvider = checkAntigravityProviderStatus(effectiveConfig, processEnv).pipe(
+      const checkProvider = checkAntigravityProviderStatus(effectiveConfig, processEnv, cwd).pipe(
         Effect.map(stampIdentity),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
       );
 
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
@@ -125,8 +130,10 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         streamSettings: snapshotSettings.streamSettings,
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
         initialSnapshot: (settings) =>
-          buildInitialAntigravityProviderSnapshot(settings.provider).pipe(
+          buildInitialAntigravityProviderSnapshot(settings.provider, cwd, processEnv).pipe(
             Effect.map(stampIdentity),
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
           ),
         checkProvider,
       }).pipe(

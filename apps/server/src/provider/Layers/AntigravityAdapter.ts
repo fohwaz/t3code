@@ -52,6 +52,10 @@ import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogg
 const PROVIDER = ProviderDriverKind.make("antigravity");
 const ANTIGRAVITY_RESUME_VERSION = 1 as const;
 
+type SpawnedProcess = Effect.Success<
+  ReturnType<ChildProcessSpawner.ChildProcessSpawner["Service"]["spawn"]>
+>;
+
 export interface AntigravityAdapterLiveOptions {
   readonly environment?: NodeJS.ProcessEnv;
   readonly nativeEventLogPath?: string;
@@ -83,13 +87,15 @@ function parseAntigravityResume(raw: unknown): AntigravityResumeCursor | undefin
 
 interface AntigravitySessionContext {
   session: ProviderSession;
-  conversationId?: string;
-  activeTurnId?: TurnId;
-  activeProcess?: {
-    readonly process: ChildProcess.ChildProcess;
-    readonly fiber: Fiber.Fiber<void, never>;
-  };
-  readonly scope: Scope.CloseableScope;
+  conversationId?: string | undefined;
+  activeTurnId?: TurnId | undefined;
+  activeProcess?:
+    | {
+        readonly process: SpawnedProcess;
+        readonly fiber: Fiber.Fiber<void, never>;
+      }
+    | undefined;
+  readonly scope: Scope.Closeable;
   readonly stopped: Ref.Ref<boolean>;
 }
 
@@ -103,17 +109,50 @@ function mapToolNameToItemType(toolName: string): CanonicalItemType {
     case "sed_file":
     case "notebook_edit":
       return "file_change";
+    case "view_file":
+    case "list_dir":
+    case "find_by_name":
+    case "grep_search":
+      return "dynamic_tool_call";
     case "search_web":
     case "read_url_content":
       return "web_search";
     case "invoke_subagent":
     case "manage_subagents":
+    case "send_message":
       return "collab_agent_tool_call";
     case "call_mcp_tool":
       return "mcp_tool_call";
     default:
       return "mcp_tool_call";
   }
+}
+
+export function resolveAntigravityModelAndEffort(
+  modelSelectionModel: string | undefined,
+  selectedEffort: string | undefined,
+): { readonly model: string | undefined; readonly effort: string | undefined } {
+  if (!modelSelectionModel) {
+    return { model: undefined, effort: selectedEffort };
+  }
+
+  const trimmed = modelSelectionModel.trim();
+  if (trimmed === "gpt-oss-120b" || trimmed === "gpt-oss-120b-medium") {
+    return { model: "gpt-oss-120b-medium", effort: "medium" };
+  }
+  if (trimmed === "claude-opus-4-6" || trimmed === "claude-opus-4-6-thinking") {
+    return { model: "claude-opus-4-6-thinking", effort: "high" };
+  }
+  if (trimmed === "claude-sonnet-4-6") {
+    return { model: "claude-sonnet-4-6", effort: "high" };
+  }
+
+  const baseMatch = /^(gemini-[\w.]+(?:-flash|-pro)?)-(low|medium|high)$/i.exec(trimmed);
+  if (baseMatch && baseMatch[1]) {
+    return { model: baseMatch[1], effort: selectedEffort ?? baseMatch[2]?.toLowerCase() };
+  }
+
+  return { model: trimmed, effort: selectedEffort };
 }
 
 export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(function* (
@@ -131,8 +170,8 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
 
   const eventLogger =
     options?.nativeEventLogger ??
-    (options?.nativeEventLogPath
-      ? yield* makeEventNdjsonLogger(options.nativeEventLogPath)
+    (options?.nativeEventLogPath !== undefined
+      ? yield* makeEventNdjsonLogger(options.nativeEventLogPath, { stream: "native" })
       : undefined);
 
   const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
@@ -186,9 +225,9 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
       return ctx;
     });
 
-  const startSession = (
+  const startSession: AntigravityAdapterShape["startSession"] = (
     input: ProviderSessionStartInput,
-  ): Effect.Effect<ProviderSession, ProviderAdapterError> =>
+  ) =>
     Effect.gen(function* () {
       const now = new Date().toISOString();
       const parsedResume = parseAntigravityResume(input.resumeCursor);
@@ -235,21 +274,26 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
       return session;
     });
 
-  const sendTurn = (
-    input: ProviderSendTurnInput,
-  ): Effect.Effect<ProviderTurnStartResult, ProviderAdapterError> =>
+  const sendTurn: AntigravityAdapterShape["sendTurn"] = (input: ProviderSendTurnInput) =>
     Effect.gen(function* () {
       const ctx = yield* requireSession(input.threadId);
       const turnId = TurnId.make(globalThis.crypto.randomUUID());
       ctx.activeTurnId = turnId;
 
       const binaryPath = antigravitySettings.binaryPath.trim() || "agy";
-      const model = input.modelSelection?.model.trim();
-      const effort = input.modelSelection
+      const rawModel = input.modelSelection?.model;
+      const rawEffort = input.modelSelection
         ? getModelSelectionStringOptionValue(input.modelSelection, "effort")
         : undefined;
+      const { model, effort } = resolveAntigravityModelAndEffort(rawModel, rawEffort);
 
-      const args: string[] = ["--output-format", "stream-json", "--dangerously-skip-permissions"];
+      const isFullAccess =
+        input.interactionMode !== "plan" && ctx.session.runtimeMode === "full-access";
+
+      const args: string[] = ["--output-format", "stream-json"];
+      if (isFullAccess) {
+        args.push("--dangerously-skip-permissions");
+      }
 
       if (ctx.conversationId) {
         args.push("--conversation", ctx.conversationId);
@@ -298,8 +342,6 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
               }),
           ),
         );
-
-      const stdinWriter = (_text: string) => Effect.void;
 
       const turnCompletedDeferred = yield* Deferred.make<void, ProviderAdapterError>();
       const currentItemMap = new Map<number, RuntimeItemId>();
@@ -446,6 +488,27 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
                   },
                 });
               } else if (state === "DONE") {
+                const toolOutput = toolInfo?.output ?? toolInfo?.result;
+                if (toolOutput !== undefined && toolOutput !== null) {
+                  const outputStr =
+                    typeof toolOutput === "string" ? toolOutput : JSON.stringify(toolOutput);
+                  if (outputStr.length > 0) {
+                    const streamKind =
+                      canonicalType === "command_execution"
+                        ? "command_output"
+                        : canonicalType === "file_change"
+                          ? "file_change_output"
+                          : "assistant_text";
+                    yield* publishEvent({
+                      ...makeEventBase(input.threadId, turnId, itemId),
+                      type: "content.delta",
+                      payload: {
+                        streamKind,
+                        delta: outputStr,
+                      },
+                    });
+                  }
+                }
                 yield* publishEvent({
                   ...makeEventBase(input.threadId, turnId, itemId),
                   type: "item.completed",
@@ -467,7 +530,9 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
                     detail:
                       typeof toolInfo?.error === "object"
                         ? JSON.stringify(toolInfo.error)
-                        : undefined,
+                        : typeof toolInfo?.error === "string"
+                          ? toolInfo.error
+                          : undefined,
                     data: toolInfo?.parameters,
                   },
                 });
@@ -596,10 +661,10 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
       return result;
     });
 
-  const interruptTurn = (
+  const interruptTurn: AntigravityAdapterShape["interruptTurn"] = (
     threadId: ThreadId,
     turnId?: TurnId,
-  ): Effect.Effect<void, ProviderAdapterError> =>
+  ) =>
     Effect.gen(function* () {
       const ctx = yield* requireSession(threadId);
       const activeTurn = turnId ?? ctx.activeTurnId;
@@ -631,7 +696,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
       }
     });
 
-  const stopSession = (threadId: ThreadId): Effect.Effect<void, ProviderAdapterError> =>
+  const stopSession: AntigravityAdapterShape["stopSession"] = (threadId: ThreadId) =>
     Effect.gen(function* () {
       const ctx = getSession(threadId);
       if (!ctx) {
@@ -664,13 +729,13 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
       });
     });
 
-  const listSessions = (): Effect.Effect<ReadonlyArray<ProviderSession>> =>
+  const listSessions: AntigravityAdapterShape["listSessions"] = () =>
     Effect.sync(() => Array.from(sessions.values()).map((ctx) => ctx.session));
 
-  const hasSession = (threadId: ThreadId): Effect.Effect<boolean> =>
+  const hasSession: AntigravityAdapterShape["hasSession"] = (threadId: ThreadId) =>
     Effect.sync(() => sessions.has(threadId));
 
-  const readThread = (threadId: ThreadId) =>
+  const readThread: AntigravityAdapterShape["readThread"] = (threadId: ThreadId) =>
     Effect.gen(function* () {
       yield* requireSession(threadId);
       return {
@@ -679,7 +744,10 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
       };
     });
 
-  const rollbackThread = (threadId: ThreadId, _numTurns: number) =>
+  const rollbackThread: AntigravityAdapterShape["rollbackThread"] = (
+    threadId: ThreadId,
+    _numTurns: number,
+  ) =>
     Effect.gen(function* () {
       yield* requireSession(threadId);
       return {
@@ -700,17 +768,17 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
     ),
   );
 
-  const respondToRequest = (
+  const respondToRequest: AntigravityAdapterShape["respondToRequest"] = (
     _threadId: ThreadId,
     _requestId: ApprovalRequestId,
     _decision: ProviderApprovalDecision,
-  ): Effect.Effect<void, ProviderAdapterError> => Effect.void;
+  ) => Effect.void;
 
-  const respondToUserInput = (
+  const respondToUserInput: AntigravityAdapterShape["respondToUserInput"] = (
     _threadId: ThreadId,
     _requestId: ApprovalRequestId,
     _answers: ProviderUserInputAnswers,
-  ): Effect.Effect<void, ProviderAdapterError> => Effect.void;
+  ) => Effect.void;
 
   return {
     provider: PROVIDER,

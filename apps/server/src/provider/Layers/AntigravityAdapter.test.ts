@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { describe, expect, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -14,9 +14,29 @@ import {
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
 
-import { makeAntigravityAdapter } from "./AntigravityAdapter.ts";
+import { makeAntigravityAdapter, resolveAntigravityModelAndEffort } from "./AntigravityAdapter.ts";
 
 const decodeAntigravitySettings = Schema.decodeSync(AntigravitySettings);
+
+describe("resolveAntigravityModelAndEffort", () => {
+  it("resolves standard model with explicitly selected effort", () => {
+    const res = resolveAntigravityModelAndEffort("gemini-3.7-flash", "low");
+    expect(res.model).toBe("gemini-3.7-flash");
+    expect(res.effort).toBe("low");
+  });
+
+  it("handles Claude Sonnet 4.6 thinking model fixed high effort", () => {
+    const res = resolveAntigravityModelAndEffort("claude-sonnet-4-6", undefined);
+    expect(res.model).toBe("claude-sonnet-4-6");
+    expect(res.effort).toBe("high");
+  });
+
+  it("handles GPT-OSS 120B fixed medium effort", () => {
+    const res = resolveAntigravityModelAndEffort("gpt-oss-120b-medium", undefined);
+    expect(res.model).toBe("gpt-oss-120b-medium");
+    expect(res.effort).toBe("medium");
+  });
+});
 
 it.layer(NodeServices.layer)("AntigravityAdapter", (it) => {
   it.effect("manages session lifecycle (start, list, has, stop)", () =>
@@ -43,45 +63,6 @@ it.layer(NodeServices.layer)("AntigravityAdapter", (it) => {
 
       yield* adapter.stopSession(threadId);
       expect(yield* adapter.hasSession(threadId)).toBe(false);
-    }),
-  );
-
-  it.effect("executes a turn with installed agy CLI", () =>
-    Effect.gen(function* () {
-      const adapter = yield* makeAntigravityAdapter(
-        decodeAntigravitySettings({
-          enabled: true,
-          binaryPath: "/Users/fohwaz/.local/bin/agy",
-        }),
-      );
-
-      const threadId = ThreadId.make("thread-test-real");
-      yield* adapter.startSession({
-        threadId,
-        provider: ProviderDriverKind.make("antigravity"),
-        cwd: process.cwd(),
-        runtimeMode: "full-access",
-      });
-
-      const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 4)).pipe(
-        Effect.forkChild,
-      );
-
-      const turnResult = yield* adapter.sendTurn({
-        threadId,
-        input: "Reply with the single word pong",
-      });
-
-      expect(turnResult.threadId).toBe(threadId);
-      expect(turnResult.turnId).toBeDefined();
-
-      const events = Array.from(yield* Fiber.join(eventsFiber));
-      const eventTypes = events.map((e) => e.type);
-
-      expect(eventTypes).toContain("item.started");
-      expect(eventTypes).toContain("content.delta");
-
-      yield* adapter.stopSession(threadId);
     }),
   );
 });

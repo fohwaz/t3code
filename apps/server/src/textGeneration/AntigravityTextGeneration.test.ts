@@ -75,7 +75,7 @@ it.layer(AntigravityTextGenerationTestLayer)("AntigravityTextGeneration", (it) =
         stagedPatch: "diff --git a/foo b/foo",
         modelSelection: createModelSelection(
           ProviderInstanceId.make("antigravity"),
-          "gemini-3.7-flash-high",
+          "gemini-3.7-flash",
         ),
       });
 
@@ -109,7 +109,7 @@ it.layer(AntigravityTextGenerationTestLayer)("AntigravityTextGeneration", (it) =
         message: "Add antigravity support",
         modelSelection: createModelSelection(
           ProviderInstanceId.make("antigravity"),
-          "gemini-3.7-flash-high",
+          "gemini-3.7-flash",
         ),
       });
 
@@ -142,7 +142,7 @@ it.layer(AntigravityTextGenerationTestLayer)("AntigravityTextGeneration", (it) =
         message: "Add antigravity provider",
         modelSelection: createModelSelection(
           ProviderInstanceId.make("antigravity"),
-          "gemini-3.7-flash-high",
+          "gemini-3.7-flash",
         ),
       });
 

@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { describe, expect, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -13,7 +13,7 @@ import {
 
 const decodeAntigravitySettings = Schema.decodeSync(AntigravitySettings);
 
-describe("buildInitialAntigravityProviderSnapshot", () => {
+it.layer(NodeServices.layer)("buildInitialAntigravityProviderSnapshot", (it) => {
   it.effect("returns a disabled snapshot when settings.enabled is false", () =>
     Effect.gen(function* () {
       const snapshot = yield* buildInitialAntigravityProviderSnapshot(
@@ -26,14 +26,39 @@ describe("buildInitialAntigravityProviderSnapshot", () => {
     }),
   );
 
-  it.effect("returns a ready snapshot by default", () =>
+  it.effect("returns a ready snapshot by default and enumerates skills", () =>
     Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-init-" });
+      const workspace = path.join(tempDir, "workspace");
+      const skillDir = path.join(workspace, ".agents", "skills", "test-skill");
+      yield* fs.makeDirectory(skillDir, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(skillDir, "SKILL.md"),
+        ["---", "name: test-skill", "description: Test skill.", "---"].join("\n"),
+      );
+
       const snapshot = yield* buildInitialAntigravityProviderSnapshot(
         decodeAntigravitySettings({}),
+        workspace,
+        {
+          GEMINI_CONFIG_DIR: path.join(tempDir, "nonexistent-config"),
+          GEMINI_BUILTIN_SKILLS_DIR: path.join(tempDir, "nonexistent-builtin"),
+        },
       );
       expect(snapshot.enabled).toBe(true);
       expect(snapshot.installed).toBe(true);
       expect(snapshot.status).toBe("ready");
+      assert.deepEqual(snapshot.skills, [
+        {
+          name: "test-skill",
+          path: path.join(skillDir, "SKILL.md"),
+          enabled: true,
+          scope: "project",
+          description: "Test skill.",
+        },
+      ]);
     }),
   );
 });

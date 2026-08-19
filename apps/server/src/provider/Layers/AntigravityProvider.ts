@@ -5,12 +5,15 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
+import { discoverAntigravitySkills } from "../Drivers/AntigravitySkills.ts";
 import {
   buildSelectOptionDescriptor,
   buildServerProvider,
@@ -27,7 +30,7 @@ const ANTIGRAVITY_PRESENTATION = {
   requiresNewThreadForModelChange: false,
 } as const;
 
-const ANTIGRAVITY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
+const GEMINI_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [
     buildSelectOptionDescriptor({
       id: "effort",
@@ -50,101 +53,92 @@ const ANTIGRAVITY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   ],
 });
 
+const CLAUDE_THINKING_CAPABILITIES: ModelCapabilities = createModelCapabilities({
+  optionDescriptors: [
+    buildSelectOptionDescriptor({
+      id: "effort",
+      label: "Reasoning",
+      options: [{ value: "high", label: "High", isDefault: true }],
+    }),
+    buildSelectOptionDescriptor({
+      id: "contextWindow",
+      label: "Context Window",
+      options: [{ value: "200k", label: "200k", isDefault: true }],
+    }),
+  ],
+});
+
+const GPT_OSS_CAPABILITIES: ModelCapabilities = createModelCapabilities({
+  optionDescriptors: [
+    buildSelectOptionDescriptor({
+      id: "effort",
+      label: "Reasoning",
+      options: [{ value: "medium", label: "Medium", isDefault: true }],
+    }),
+    buildSelectOptionDescriptor({
+      id: "contextWindow",
+      label: "Context Window",
+      options: [{ value: "200k", label: "200k", isDefault: true }],
+    }),
+  ],
+});
+
 const VERSION_PROBE_TIMEOUT_MS = 5_000;
 
 export const ANTIGRAVITY_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
-    slug: "gemini-3.7-flash-high",
-    name: "Gemini 3.7 Flash (High)",
+    slug: "gemini-3.7-flash",
+    name: "Gemini 3.7 Flash",
     isCustom: false,
-    capabilities: ANTIGRAVITY_CAPABILITIES,
+    capabilities: GEMINI_CAPABILITIES,
   },
   {
-    slug: "gemini-3.7-flash-medium",
-    name: "Gemini 3.7 Flash (Medium)",
+    slug: "gemini-3.6-flash",
+    name: "Gemini 3.6 Flash",
     isCustom: false,
-    capabilities: ANTIGRAVITY_CAPABILITIES,
+    capabilities: GEMINI_CAPABILITIES,
   },
   {
-    slug: "gemini-3.7-flash-low",
-    name: "Gemini 3.7 Flash (Low)",
+    slug: "gemini-3.5-flash",
+    name: "Gemini 3.5 Flash",
     isCustom: false,
-    capabilities: ANTIGRAVITY_CAPABILITIES,
+    capabilities: GEMINI_CAPABILITIES,
   },
   {
-    slug: "gemini-3.6-flash-high",
-    name: "Gemini 3.6 Flash (High)",
+    slug: "gemini-3.1-pro",
+    name: "Gemini 3.1 Pro",
     isCustom: false,
-    capabilities: ANTIGRAVITY_CAPABILITIES,
-  },
-  {
-    slug: "gemini-3.6-flash-medium",
-    name: "Gemini 3.6 Flash (Medium)",
-    isCustom: false,
-    capabilities: ANTIGRAVITY_CAPABILITIES,
-  },
-  {
-    slug: "gemini-3.6-flash-low",
-    name: "Gemini 3.6 Flash (Low)",
-    isCustom: false,
-    capabilities: ANTIGRAVITY_CAPABILITIES,
-  },
-  {
-    slug: "gemini-3.5-flash-high",
-    name: "Gemini 3.5 Flash (High)",
-    isCustom: false,
-    capabilities: ANTIGRAVITY_CAPABILITIES,
-  },
-  {
-    slug: "gemini-3.5-flash-medium",
-    name: "Gemini 3.5 Flash (Medium)",
-    isCustom: false,
-    capabilities: ANTIGRAVITY_CAPABILITIES,
-  },
-  {
-    slug: "gemini-3.5-flash-low",
-    name: "Gemini 3.5 Flash (Low)",
-    isCustom: false,
-    capabilities: ANTIGRAVITY_CAPABILITIES,
-  },
-  {
-    slug: "gemini-3.1-pro-high",
-    name: "Gemini 3.1 Pro (High)",
-    isCustom: false,
-    capabilities: ANTIGRAVITY_CAPABILITIES,
-  },
-  {
-    slug: "gemini-3.1-pro-low",
-    name: "Gemini 3.1 Pro (Low)",
-    isCustom: false,
-    capabilities: ANTIGRAVITY_CAPABILITIES,
+    capabilities: GEMINI_CAPABILITIES,
   },
   {
     slug: "claude-sonnet-4-6",
-    name: "Claude Sonnet 4.6 (Thinking)",
+    name: "Claude Sonnet 4.6",
     isCustom: false,
-    capabilities: ANTIGRAVITY_CAPABILITIES,
+    capabilities: CLAUDE_THINKING_CAPABILITIES,
   },
   {
-    slug: "claude-opus-4-6-thinking",
-    name: "Claude Opus 4.6 (Thinking)",
+    slug: "claude-opus-4-6",
+    name: "Claude Opus 4.6",
     isCustom: false,
-    capabilities: ANTIGRAVITY_CAPABILITIES,
+    capabilities: CLAUDE_THINKING_CAPABILITIES,
   },
   {
-    slug: "gpt-oss-120b-medium",
-    name: "GPT-OSS 120B (Medium)",
+    slug: "gpt-oss-120b",
+    name: "GPT-OSS 120B",
     isCustom: false,
-    capabilities: ANTIGRAVITY_CAPABILITIES,
+    capabilities: GPT_OSS_CAPABILITIES,
   },
 ];
 
 export function buildInitialAntigravityProviderSnapshot(
   antigravitySettings: AntigravitySettings,
-): Effect.Effect<ServerProviderDraft> {
+  cwd?: string,
+  environment?: NodeJS.ProcessEnv,
+): Effect.Effect<ServerProviderDraft, never, FileSystem.FileSystem | Path.Path> {
   return Effect.gen(function* () {
     const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
     const models = antigravityModelsFromSettings(antigravitySettings.customModels);
+    const skills = yield* discoverAntigravitySkills(antigravitySettings, cwd, environment);
 
     if (!antigravitySettings.enabled) {
       return buildServerProvider({
@@ -152,6 +146,7 @@ export function buildInitialAntigravityProviderSnapshot(
         enabled: false,
         checkedAt,
         models,
+        skills,
         probe: {
           installed: false,
           version: null,
@@ -167,6 +162,7 @@ export function buildInitialAntigravityProviderSnapshot(
       enabled: true,
       checkedAt,
       models,
+      skills,
       probe: {
         installed: true,
         version: null,
@@ -182,16 +178,21 @@ export function antigravityModelsFromSettings(
   customModels: ReadonlyArray<string> | undefined,
   builtInModels: ReadonlyArray<ServerProviderModel> = ANTIGRAVITY_BUILT_IN_MODELS,
 ): ReadonlyArray<ServerProviderModel> {
-  return providerModelsFromSettings(builtInModels, customModels ?? [], ANTIGRAVITY_CAPABILITIES);
+  const sanitizedCustomModels = (customModels ?? []).filter(
+    (slug) => !/-(?:low|medium|high|thinking)$/i.test(slug),
+  );
+  return providerModelsFromSettings(builtInModels, sanitizedCustomModels, GEMINI_CAPABILITIES);
 }
 
 export const checkAntigravityProviderStatus = Effect.fn("checkAntigravityProviderStatus")(
   function* (
     antigravitySettings: AntigravitySettings,
     environment: NodeJS.ProcessEnv = process.env,
+    cwd?: string,
   ) {
     const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
     const models = antigravityModelsFromSettings(antigravitySettings.customModels);
+    const skills = yield* discoverAntigravitySkills(antigravitySettings, cwd, environment);
 
     if (!antigravitySettings.enabled) {
       return buildServerProvider({
@@ -199,6 +200,7 @@ export const checkAntigravityProviderStatus = Effect.fn("checkAntigravityProvide
         enabled: false,
         checkedAt,
         models,
+        skills,
         probe: {
           installed: false,
           version: null,
@@ -214,7 +216,7 @@ export const checkAntigravityProviderStatus = Effect.fn("checkAntigravityProvide
       env: environment,
     });
     const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-      cwd: process.cwd(),
+      cwd: cwd ?? process.cwd(),
       env: environment,
       shell: spawnCommand.shell,
     });
@@ -230,6 +232,7 @@ export const checkAntigravityProviderStatus = Effect.fn("checkAntigravityProvide
         enabled: true,
         checkedAt,
         models,
+        skills,
         probe: {
           installed: !isCommandMissingCause(error),
           version: null,
@@ -248,6 +251,7 @@ export const checkAntigravityProviderStatus = Effect.fn("checkAntigravityProvide
         enabled: true,
         checkedAt,
         models,
+        skills,
         probe: {
           installed: true,
           version: null,
@@ -270,6 +274,7 @@ export const checkAntigravityProviderStatus = Effect.fn("checkAntigravityProvide
         enabled: true,
         checkedAt,
         models,
+        skills,
         probe: {
           installed: true,
           version: parsedVersion,
@@ -285,6 +290,7 @@ export const checkAntigravityProviderStatus = Effect.fn("checkAntigravityProvide
       enabled: true,
       checkedAt,
       models,
+      skills,
       probe: {
         installed: true,
         version: parsedVersion,

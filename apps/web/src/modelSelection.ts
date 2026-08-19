@@ -80,9 +80,10 @@ export interface AppModelOption {
 }
 
 function toAppModelOption(model: ServerProvider["models"][number]): AppModelOption {
+  const cleanName = model.name.replace(/\s*\((?:High|Medium|Low|Thinking)\)/gi, "").trim();
   const option: AppModelOption = {
     slug: model.slug,
-    name: model.name,
+    name: cleanName || model.name,
     isCustom: model.isCustom,
   };
   if (model.shortName) option.shortName = model.shortName;
@@ -152,7 +153,10 @@ export function getAppModelOptions(
   provider: ProviderDriverKind,
   _selectedModel?: string | null,
 ): AppModelOption[] {
-  const options: AppModelOption[] = getProviderModels(providers, provider).map(toAppModelOption);
+  let options: AppModelOption[] = getProviderModels(providers, provider).map(toAppModelOption);
+  if (provider === "antigravity") {
+    options = options.filter((opt) => !/-(?:low|medium|high|thinking)$/i.test(opt.slug));
+  }
   const seen = new Set(options.map((option) => option.slug));
   const builtInModelSlugs = new Set(
     Arr.filterMap(getProviderModels(providers, provider), (model) =>
@@ -167,7 +171,10 @@ export function getAppModelOptions(
   const defaultInstanceId = defaultInstanceIdForDriver(provider);
   const customModels = readInstanceCustomModels(settings, defaultInstanceId, provider);
   for (const slug of normalizeCustomModelSlugs(customModels, builtInModelSlugs)) {
-    if (seen.has(slug)) {
+    if (
+      seen.has(slug) ||
+      (provider === "antigravity" && /-(?:low|medium|high|thinking)$/i.test(slug))
+    ) {
       continue;
     }
 
@@ -200,7 +207,10 @@ export function getAppModelOptionsForInstance(
   settings: UnifiedSettings,
   entry: ProviderInstanceEntry,
 ): AppModelOption[] {
-  const options: AppModelOption[] = entry.models.map(toAppModelOption);
+  let options: AppModelOption[] = entry.models.map(toAppModelOption);
+  if (entry.driverKind === "antigravity") {
+    options = options.filter((opt) => !/-(?:low|medium|high|thinking)$/i.test(opt.slug));
+  }
   const seen = new Set(options.map((option) => option.slug));
   const builtInModelSlugs = new Set(
     Arr.filterMap(entry.models, (model) =>
@@ -210,7 +220,10 @@ export function getAppModelOptionsForInstance(
 
   const customModels = readInstanceCustomModels(settings, entry.instanceId, entry.driverKind);
   for (const slug of normalizeCustomModelSlugs(customModels, builtInModelSlugs)) {
-    if (seen.has(slug)) {
+    if (
+      seen.has(slug) ||
+      (entry.driverKind === "antigravity" && /-(?:low|medium|high|thinking)$/i.test(slug))
+    ) {
       continue;
     }
 
