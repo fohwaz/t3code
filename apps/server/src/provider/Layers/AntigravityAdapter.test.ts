@@ -16,12 +16,44 @@ import {
 } from "@t3tools/contracts";
 
 import {
+  expandAntigravityPrompt,
   extractAntigravityAskQuestions,
   makeAntigravityAdapter,
   resolveAntigravityModelAndEffort,
 } from "./AntigravityAdapter.ts";
 
 const decodeAntigravitySettings = Schema.decodeSync(AntigravitySettings);
+
+describe("expandAntigravityPrompt", () => {
+  it("expands /grill-me with explicit turn-by-turn interview rules", () => {
+    const res = expandAntigravityPrompt("/grill-me");
+    expect(res).toContain("Ask exactly ONE focused question per turn");
+    expect(res).toContain("CRITICAL INTERVIEW RULES");
+  });
+
+  it("expands /grill-me with extra context", () => {
+    const res = expandAntigravityPrompt("/grill-me on my auth plan");
+    expect(res).toContain("Ask exactly ONE focused question per turn");
+    expect(res).toContain("Context:\non my auth plan");
+  });
+
+  it("expands natural phrasing 'grill me'", () => {
+    const res = expandAntigravityPrompt("Please grill me on this database architecture");
+    expect(res).toContain("Ask exactly ONE focused question per turn");
+    expect(res).toContain("User request:\nPlease grill me on this database architecture");
+  });
+
+  it("passes standard prompts through unchanged", () => {
+    const res = expandAntigravityPrompt("Refactor the login page");
+    expect(res).toBe("Refactor the login page");
+  });
+
+  it("handles plan mode interaction without prompt", () => {
+    const res = expandAntigravityPrompt("", "plan");
+    expect(res).toContain("Plan Mode");
+    expect(res).toContain("<proposed_plan>");
+  });
+});
 
 describe("extractAntigravityAskQuestions", () => {
   it("extracts and normalizes questions and string options", () => {

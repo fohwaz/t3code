@@ -235,6 +235,53 @@ export function resolveAntigravityModelAndEffort(
   return { model: trimmed, effort: selectedEffort };
 }
 
+export const ANTIGRAVITY_GRILL_ME_PROMPT = `Interview me about every aspect of this plan or technical design until reaching a shared understanding and a defensible design.
+
+CRITICAL INTERVIEW RULES:
+1. Ask exactly ONE focused question per turn.
+2. Present clear options (e.g. A, B, C, D) with descriptions, mark your recommended choice with "(Recommended)", and provide a brief rationale.
+3. Conclude your turn immediately after asking the single question and WAIT for my reply.
+4. NEVER assume or simulate my answers, and do NOT write files or finalize the design until all interview questions have been answered by me across our conversation turns.
+5. Use each of my answers to choose the next highest-leverage question in the decision tree.
+6. Cover goals/non-goals, constraints, alternatives, data models, error handling, security, performance, and rollout.`;
+
+export const ANTIGRAVITY_SLASH_COMMAND_EXPANSIONS: Record<string, string> = {
+  "grill-me": ANTIGRAVITY_GRILL_ME_PROMPT,
+  plan: `Enter structured Plan Mode. Explore the codebase and design an implementation plan for the request. When the plan is complete, present the final spec wrapped in a \`<proposed_plan>\` block.`,
+  goal: `Execute this task autonomously toward the goal. Continue until the goal is fully achieved and verified.`,
+  learn: `Persist lessons, patterns, and workspace rules for future turns.`,
+  schedule: `Schedule a one-shot timer or recurring cron job using the schedule tool.`,
+  "teamwork-preview": `Coordinate a team of autonomous subagents working together using invoke_subagent.`,
+};
+
+export function expandAntigravityPrompt(
+  inputPrompt: string | undefined,
+  interactionMode?: string,
+): string {
+  if (!inputPrompt || inputPrompt.trim().length === 0) {
+    if (interactionMode === "plan") {
+      return ANTIGRAVITY_SLASH_COMMAND_EXPANSIONS.plan;
+    }
+    return "";
+  }
+  const trimmed = inputPrompt.trim();
+  const slashMatch = /^\/([a-zA-Z0-9_-]+)(?:\s+([\s\S]*))?$/.exec(trimmed);
+  if (slashMatch) {
+    const commandName = slashMatch[1]?.toLowerCase();
+    const extra = slashMatch[2]?.trim();
+    if (commandName && ANTIGRAVITY_SLASH_COMMAND_EXPANSIONS[commandName]) {
+      const expansion = ANTIGRAVITY_SLASH_COMMAND_EXPANSIONS[commandName];
+      return extra && extra.length > 0 ? `${expansion}\n\nContext:\n${extra}` : expansion;
+    }
+  }
+
+  if (/^\s*(?:please\s+)?grill\s+me\b/i.test(trimmed)) {
+    return `${ANTIGRAVITY_GRILL_ME_PROMPT}\n\nUser request:\n${trimmed}`;
+  }
+
+  return inputPrompt;
+}
+
 export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(function* (
   antigravitySettings: AntigravitySettings,
   options?: AntigravityAdapterLiveOptions,
@@ -386,12 +433,16 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
       if (effort) {
         args.push("--effort", effort);
       }
+      if (input.interactionMode === "plan") {
+        args.push("--mode", "plan");
+      }
       if (antigravitySettings.launchArgs && antigravitySettings.launchArgs.trim().length > 0) {
         const extra = antigravitySettings.launchArgs.trim().split(/\s+/);
         args.push(...extra);
       }
 
-      args.push("-p", input.input ?? "");
+      const expandedPrompt = expandAntigravityPrompt(input.input, input.interactionMode);
+      args.push("-p", expandedPrompt);
 
       yield* publishEvent({
         ...makeEventBase(input.threadId, turnId),
